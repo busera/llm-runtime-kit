@@ -1,0 +1,332 @@
+# LLM Runtime Kit example configuration.
+#
+# Purpose:
+#   This file is the human-editable runtime policy for provider endpoints,
+#   model profiles, retry behavior, logging behavior, and fallback order.
+#
+# Security rule:
+#   Do NOT put API key values in this file. Store only credential
+#   names in `api_key_name`. The package resolves credentials lazily only when
+#   a provider is actually called, using the order configured in `credentials`.
+#   Keep config_llm.yaml non-secret: references only, never API key values.
+#
+# Main concepts:
+#   provider = an endpoint/API shape, e.g. local Ollama, OpenAI, OpenRouter,
+#              Anthropic.
+#   profile  = a runnable model preset: provider + model + generation options.
+#   fallback = an ordered route chain of profile names.
+#
+# Privacy/cost boundary:
+#   `allow_cloud: false` skips cloud/API-key providers at runtime. It also
+#   blocks Ollama cloud model tags such as `*:cloud` or `*-cloud`, including
+#   one-call model overrides. Keep this false for local-only work.
+
+# Default route used when LLMRequest.profile is omitted.
+# This can be either:
+#   1. a concrete profile under `profiles`, or
+#   2. a route alias under `fallbacks`.
+# `ollama_default` is a route alias below, not a concrete profile. Keeping it
+# as an alias lets project code stay stable while you reorder the fallback
+# chain or swap concrete models here.
+default_profile: ollama_default
+
+# Cloud execution gate.
+# false = local-only execution: remote/API-key profiles are skipped and Ollama
+#         cloud tags are blocked.
+# true  = configured cloud/API-key profiles may run when reached in a fallback
+#         chain and their required credentials are available.
+allow_cloud: false
+
+credentials:
+  # Credential source order for API-key providers. Resolution is lazy: missing
+  # OpenAI/OpenRouter/Anthropic/Ollama Cloud keys do not break local Ollama
+  # usage unless that provider is actually selected and allowed to execute.
+  #
+  # Source behavior:
+  #   env     = process environment variables
+  #   dotenv  = project .env file parsed without mutating os.environ
+  #   keyring = optional Python keyring lookup (macOS Keychain, Linux Secret
+  #             Service/GNOME Keyring/KWallet, Windows Credential Manager)
+  #
+  # Headless Linux, containers, cron, and locked macOS sessions may not have a
+  # usable OS keyring. Prefer env vars or .env for those contexts.
+  sources: [env, dotenv, keyring]
+  dotenv_path: .env
+  keyring_service: llm-runtime-kit
+
+logging:
+  # Standard loguru level. Use DEBUG only during local troubleshooting.
+  level: INFO
+
+  # Keep prompt/response logging disabled by default. Prompts and responses can
+  # contain confidential or personal data. Enable only with explicit project
+  # approval and a verified redaction policy.
+  log_prompts: false
+  log_responses: false
+
+  # Case-insensitive key fragments that should be treated as sensitive by any
+  # logging/redaction helpers. These are names/patterns, not secret values.
+  redact_keys:
+    - api_key
+    - authorization
+    - token
+
+output:
+  # Generic output-contract defaults. Keep domain schemas and semantic quality
+  # checks in the consuming project; this package only standardizes extraction,
+  # parsing, repair, validation hooks, and retry/fallback behavior.
+  #
+  # mode:
+  #   text = no structured-output validation unless a request supplies an
+  #          output_model, output_validator, or per-call JSON override.
+  #   json = require JSON-shaped output by default for every request.
+  mode: text
+
+  # If true, model output must contain a valid JSON object or array. JSON can be
+  # surrounded by prose or fenced in ```json blocks; the runtime extracts the
+  # candidate before parsing.
+  require_valid_json: false
+
+  # Repair minor syntax defects before failing validation. Built-in repair is
+  # conservative; install llm-runtime-kit[structured] if you want optional
+  # json-repair integration when available.
+  repair_json: true
+  max_repair_attempts: 1
+
+  # Content failures can retry the same profile before falling back. Domain
+  # semantic validators should raise a clean error and let the project decide
+  # whether that failure is retryable per request. Validation-error retry prompt
+  # feedback is disabled by default to avoid carrying prior output contents
+  # across retries or fallback providers; if enabled, Pydantic errors are
+  # sanitized before reuse.
+  validation_failure_is_retryable: true
+  include_validation_error_in_retry_prompt: false
+
+retry:
+  # Maximum attempts for one idempotent completion call against one profile.
+  # The first call counts as attempt 1, so 3 means initial try + up to 2
+  # retries. Fallback to the next profile happens only after this profile is
+  # exhausted, e.g. after 3 failed attempts when max_attempts is 3. A
+  # non-retryable failure, such as a missing credential or non-transient 4xx,
+  # can move to fallback immediately because extra retries would not help.
+  max_attempts: 3
+
+  # Exponential backoff starts at this delay, then grows up to max_delay_seconds.
+  base_delay_seconds: 1.0
+  max_delay_seconds: 20.0
+
+  # Random jitter added to retry sleeps. The router and retry helper both add
+  # a value in the range [0, jitter_seconds] after bounded exponential backoff.
+  jitter_seconds: 0.25
+
+  # HTTP statuses treated as transient for idempotent calls. Do not add 4xx
+  # auth/config errors here; those should fail fast.
+  retryable_statuses: [408, 409, 429, 500, 502, 503, 504]
+
+providers:
+  # Provider fields:
+  #   kind: one of `ollama`, `openai`, `openrouter`, or `anthropic`.
+  #   api_style: transport/parser style. Ollama can be either
+  #     `openai_compatible` for the local daemon API or `native` for the direct
+  #     Ollama `/api/chat` shape. OpenAI and OpenRouter use
+  #     `openai_compatible`; Anthropic uses `native`.
+  #   base_url: root endpoint. Clients append their own API path. Do not include
+  #     `/v1/chat/completions`, `/v1/messages`, or `/chat` here.
+  #   api_key_name: credential reference used by CredentialResolver. Empty
+  #     string means no credential is required.
+  #   timeout_seconds: per HTTP request timeout.
+  #   require_loopback: true means the endpoint is expected to be local. For
+  #     Ollama, wildcard bind addresses such as 0.0.0.0 normalize to loopback.
+
+  # Local Ollama daemon with local models only. No API key is required.
+  # Use this for privacy-preserving local inference.
+  ollama_local:
+    kind: ollama
+    api_style: openai_compatible
+    base_url: http://localhost:11434
+    api_key_name: ""
+    timeout_seconds: 120
+    require_loopback: true
+
+  # Local Ollama daemon proxying Ollama Cloud models after `ollama signin`.
+  # Python still talks to localhost, but the model tag routes work to Ollama
+  # Cloud through the daemon. Treat this as cloud execution.
+  ollama_local_cloud_proxy:
+    kind: ollama
+    api_style: openai_compatible
+    base_url: http://localhost:11434
+    api_key_name: ""
+    timeout_seconds: 120
+    require_loopback: true
+
+  # Direct API-key access to ollama.com without the local daemon. The native
+  # client appends `/chat`, so this becomes https://ollama.com/api/chat.
+  # Set OLLAMA_API_KEY in the environment when allow_cloud is true and this
+  # provider is expected to run.
+  ollama_cloud_api:
+    kind: ollama
+    api_style: native
+    base_url: https://ollama.com/api
+    api_key_name: OLLAMA_API_KEY
+    timeout_seconds: 120
+    require_loopback: false
+
+  # OpenAI-compatible cloud API. The client appends `/v1/chat/completions`, so
+  # keep base_url at the API host root.
+  openai:
+    kind: openai
+    api_style: openai_compatible
+    base_url: https://api.openai.com
+    api_key_name: OPENAI_API_KEY
+    timeout_seconds: 120
+    require_loopback: false
+
+  # OpenRouter cloud API. OpenRouter is OpenAI-compatible at
+  # https://openrouter.ai/api/v1/chat/completions, so keep base_url at
+  # https://openrouter.ai/api. Optional OpenRouter attribution headers are not
+  # required by the current runtime client.
+  openrouter:
+    kind: openrouter
+    api_style: openai_compatible
+    base_url: https://openrouter.ai/api
+    api_key_name: OPENROUTER_API_KEY
+    timeout_seconds: 120
+    require_loopback: false
+
+  # Anthropic Messages API. The client appends `/v1/messages`, so keep base_url
+  # at the API host root.
+  anthropic:
+    kind: anthropic
+    api_style: native
+    base_url: https://api.anthropic.com
+    api_key_name: ANTHROPIC_API_KEY
+    timeout_seconds: 120
+    require_loopback: false
+
+profiles:
+  # Profile fields:
+  #   provider: provider key from the `providers` section.
+  #   model: provider-specific model tag/name.
+  #   temperature: sampling temperature. Lower is more deterministic.
+  #   max_tokens: generated output-token budget. Native Ollama and Anthropic
+  #     send this as `max_tokens`; OpenAI/OpenRouter Chat Completions send it as
+  #     `max_completion_tokens` per current provider docs.
+  #   max_context_tokens: optional context-window budget. The runtime sends this
+  #     as Ollama native `options.num_ctx` when using the native Ollama client;
+  #     for other clients it is retained as profile/request policy for consuming
+  #     projects to use during prompt packing and budgeting.
+  #   think: optional Ollama thinking flag. Use false for models that may return
+  #     empty visible content when thinking is enabled and the caller expects a
+  #     direct answer. Non-Ollama providers ignore this field.
+
+  # Direct Ollama Cloud API profile. Direct ollama.com API uses base model tags,
+  # not local-daemon cloud tags.
+  ollama_cloud_direct:
+    provider: ollama_cloud_api
+    model: gpt-oss:120b
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 128000
+    think: false
+
+  # Local daemon cloud-proxy profile. Cloud-proxy models use `*-cloud` or
+  # `*:cloud` tags and require `ollama signin` outside Python.
+  ollama_local_cloud_proxy_default:
+    provider: ollama_local_cloud_proxy
+    model: gpt-oss:120b-cloud
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 128000
+    think: false
+
+  # Local-only Ollama profile. Change this model to whatever is actually pulled
+  # and available in the local daemon, for example via `ollama list`.
+  ollama_local_default:
+    provider: ollama_local
+    model: qwen3.6:35b-a3b-coding-mxfp8
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 128000
+    think: false
+
+  # OpenAI profile. Requires OPENAI_API_KEY in the environment and allow_cloud:
+  # true before it can execute.
+  openai_default:
+    provider: openai
+    model: gpt-5.5
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 128000
+
+  # OpenRouter profile. Requires OPENROUTER_API_KEY in the environment and
+  # allow_cloud: true before it can execute. Model names use OpenRouter's
+  # provider/model format, for example `openai/gpt-5.2`.
+  openrouter_default:
+    provider: openrouter
+    model: openai/gpt-5.2
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 128000
+
+  # Anthropic profile. Requires ANTHROPIC_API_KEY in the environment and
+  # allow_cloud: true before it can execute.
+  anthropic_default:
+    provider: anthropic
+    model: claude-sonnet-4-5
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 200000
+
+fallbacks:
+  # Fallback chains are ordered and fully configurable.
+  #
+  # Each key can be:
+  #   - a profile name, to define fallbacks after that profile fails, or
+  #   - a route alias, to create a stable name that points at a chain.
+  #
+  # Every list item must be a concrete profile from the `profiles` section.
+  # The router tries each profile in order and returns the first successful
+  # response. For a retryable failure, the current profile is retried up to
+  # `retry.max_attempts` before the router falls back to the next profile. With
+  # the default max_attempts: 3, that means initial try + 2 retries, then the
+  # fallback kicks in. Non-retryable failures, such as missing credentials or
+  # non-transient 4xx errors, can move to fallback immediately. With
+  # allow_cloud: false, cloud/API-key entries are skipped, so the chain below
+  # effectively lands on `ollama_local_default` for local-only use.
+
+  # General default route. Current order prefers direct Ollama Cloud when cloud
+  # is allowed, then local daemon cloud proxy, then local Ollama, then OpenAI,
+  # OpenRouter, and Anthropic as additional cloud fallbacks. Reorder this list
+  # per project cost, privacy, quality, and latency requirements.
+  ollama_default:
+    - ollama_cloud_direct
+    - ollama_local_cloud_proxy_default
+    - ollama_local_default
+    - openai_default
+    - openrouter_default
+    - anthropic_default
+
+  # Route for projects that usually prefer OpenAI but can fall back. With
+  # allow_cloud: false, `openai_default`, `ollama_cloud_direct`, and
+  # `openrouter_default` are skipped and `ollama_local_default` is used.
+  openai_default:
+    - openai_default
+    - ollama_cloud_direct
+    - openrouter_default
+    - ollama_local_default
+
+  # Route for projects that usually prefer OpenRouter but can fall back. With
+  # allow_cloud: false, `openrouter_default` and `ollama_cloud_direct` are
+  # skipped and `ollama_local_default` is used.
+  openrouter_default:
+    - openrouter_default
+    - ollama_cloud_direct
+    - ollama_local_default
+
+  # Route for projects that usually prefer Anthropic but can fall back. With
+  # allow_cloud: false, `anthropic_default` and `ollama_cloud_direct` are skipped
+  # and `ollama_local_default` is used.
+  anthropic_default:
+    - anthropic_default
+    - ollama_cloud_direct
+    - ollama_local_default

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling==1.26.3"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-runtime-kit"
+version = "0.1.0"
+description = "Reusable LLM provider runtime for Ollama local/cloud, OpenAI-compatible APIs, OpenRouter, and Anthropic."
+readme = "README.md"
+license = "MIT"
+authors = [
+  { name = "Andrew Buser" },
+]
+requires-python = ">=3.10"
+dependencies = [
+  "loguru==0.7.3",
+  "pydantic==2.12.4",
+  "python-dotenv==1.2.1",
+  "PyYAML==6.0.2",
+]
+
+[project.optional-dependencies]
+credentials = [
+  "keyring==25.7.0",
+]
+structured = [
+  "json-repair>=0.39.0",
+]
+dev = [
+  "pytest==9.0.2",
+  "ruff==0.14.6",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

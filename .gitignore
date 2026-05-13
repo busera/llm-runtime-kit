@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+dist/
+build/
+*.egg-info/
+uv.lock
+
+# Runtime / secrets / generated
+.env
+.env.*
+!.env.example
+.hermes/
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.duckdb
+*.parquet
+outputs/
+docs/_Archive/
+
+.DS_Store
