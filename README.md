@@ -54,7 +54,7 @@ router = LLMRouter(config)
 
 response = router.complete(
     LLMRequest(
-        prompt="Summarize the operational risk in one sentence.",
+        prompt="Summarize this note in one sentence.",
         profile="ollama_default",
     )
 )
@@ -70,7 +70,17 @@ else:
 The package intentionally exposes a small public API from `llm_runtime_kit`:
 
 ```python
-from llm_runtime_kit import LLMRequest, LLMResponse, LLMRouter, RuntimeConfig, load_config
+from llm_runtime_kit import (
+    CredentialConfig,
+    CredentialResolver,
+    LLMRequest,
+    LLMResponse,
+    LLMRouter,
+    OutputConfig,
+    OutputValidationResult,
+    RuntimeConfig,
+    load_config,
+)
 ```
 
 ### `load_config(path: str | Path) -> RuntimeConfig`
@@ -173,7 +183,7 @@ Typical use:
 
 ```python
 request = LLMRequest(
-    prompt="Draft three audit discovery questions.",
+    prompt="Draft three project discovery questions.",
     profile="ollama_default",
     temperature=0.1,
 )
@@ -461,18 +471,17 @@ from pydantic import BaseModel
 from llm_runtime_kit import LLMRequest, LLMRouter, load_config
 
 
-class AuditQuestions(BaseModel):
-    objective: str
-    questions: list[str]
-    risks: list[str]
+class ProjectSummary(BaseModel):
+    title: str
+    bullets: list[str]
 
 
 router = LLMRouter(load_config("config_llm.yaml"))
 response = router.complete(
     LLMRequest(
-        prompt="Return audit discovery questions as JSON.",
+        prompt="Return a short project summary as JSON.",
         profile="ollama_default",
-        output_model=AuditQuestions,
+        output_model=ProjectSummary,
     )
 )
 
@@ -847,12 +856,12 @@ llm-runtime-kit/
 ├── pyproject.toml
 ├── README.md
 ├── LICENSE
-├── docs/
 ├── src/
 │   └── llm_runtime_kit/
 │       ├── config.py
 │       ├── credentials.py
 │       ├── logging.py
+│       ├── output.py
 │       ├── retry.py
 │       ├── router.py
 │       ├── types.py

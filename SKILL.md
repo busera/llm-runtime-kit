@@ -118,18 +118,17 @@ from pydantic import BaseModel
 from llm_runtime_kit import LLMRequest, LLMRouter, load_config
 
 
-class AuditQuestions(BaseModel):
-    objective: str
-    questions: list[str]
-    risks: list[str]
+class ProjectSummary(BaseModel):
+    title: str
+    bullets: list[str]
 
 
 router = LLMRouter(load_config("config_llm.yaml"))
 response = router.complete(
     LLMRequest(
-        prompt="Return audit discovery questions as JSON.",
+        prompt="Return a short project summary as JSON.",
         profile="ollama_default",
-        output_model=AuditQuestions,
+        output_model=ProjectSummary,
     )
 )
 
@@ -172,6 +171,14 @@ retry:
   max_delay_seconds: 20.0
   jitter_seconds: 0.25
   retryable_statuses: [408, 409, 429, 500, 502, 503, 504]
+
+output:
+  mode: text
+  require_valid_json: false
+  repair_json: true
+  max_repair_attempts: 1
+  validation_failure_is_retryable: true
+  include_validation_error_in_retry_prompt: false
 
 providers:
   ollama_local:
@@ -392,6 +399,7 @@ When using this package in a consuming repo:
 5. Verify `.gitignore` excludes `.env`, `.env.*`, logs, caches, and runtime state.
 6. Replace direct provider calls with `LLMRouter.complete()`.
 7. Keep application code provider-agnostic; profiles should be config names, not hardcoded model strings scattered through code.
+8. Keep project schemas and semantic validators in consuming code; use `output_model` and `output_validator` only as runtime hooks.
 9. Add tests with mocked clients or mocked HTTP openers.
 10. Test cloud-disabled behavior with `allow_cloud: false`.
 11. Test missing optional credentials do not break local-only execution.
@@ -477,5 +485,6 @@ Before declaring integration complete:
 - [ ] `allow_cloud: false` blocks OpenAI, OpenRouter, Anthropic, direct Ollama Cloud API, and Ollama cloud model tags.
 - [ ] Tests mock external HTTP calls.
 - [ ] Retry tests cover transient HTTP statuses and timeout/network errors where the consuming project relies on retries.
+- [ ] Structured-output tests cover JSON extraction/repair/validation when the consuming project relies on output contracts.
 - [ ] No prompts, responses, Authorization headers, or API keys appear in logs or test output.
 - [ ] Syntax, tests, lint, format check, and secret scan pass.
