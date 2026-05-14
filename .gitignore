@@ -23,5 +23,6 @@ logs/
 *.parquet
 outputs/
 docs/_Archive/
+PLAN.md
 
 .DS_Store
