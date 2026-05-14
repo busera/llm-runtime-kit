@@ -22,7 +22,7 @@ The point is to stop rebuilding the same provider/config/retry/fallback/logging 
 
 ## Current status
 
-This is an early v0.1 package: a reusable starting point for shared LLM projects, not a v1.0 runtime yet. The current test suite uses mocked tests for config validation, clients, retry behavior, and routing/fallback behavior, with the intent to harden the package toward v1.0 over time.
+This is an early v0.1 package: a reusable starting point for shared LLM projects, not a v1.0 runtime yet. The public repository is https://github.com/busera/llm-runtime-kit. CI currently runs compile, pytest, Ruff lint, and Ruff format checks on Python 3.10, 3.11, and 3.12. The test suite uses mocked tests for config validation, clients, credential lookup, output contracts, retry behavior, and routing/fallback behavior. It does not make live API calls.
 
 Known next implementation areas:
 
@@ -32,16 +32,29 @@ Known next implementation areas:
 
 ## Installation
 
-From the repository root:
+From the public GitHub repository:
+
+```bash
+python -m pip install 'llm-runtime-kit @ git+https://github.com/busera/llm-runtime-kit.git'
+```
+
+From a local checkout during development:
 
 ```bash
 python -m pip install -e .
 ```
 
-For development:
+For package development:
 
 ```bash
 python -m pip install -e '.[dev]'
+```
+
+Optional extras:
+
+```bash
+python -m pip install -e '.[credentials]'  # Python keyring support
+python -m pip install -e '.[structured]'   # optional json-repair integration
 ```
 
 ## Quick start
@@ -845,6 +858,15 @@ python -m compileall -q src tests
 python -m pytest -q
 python -m ruff check src tests
 python -m ruff format --check src tests
+```
+
+If you work from the local development environment that uses `uv`, the equivalent command set is:
+
+```bash
+uv run python -m compileall -q src tests
+uv run python -m pytest -q
+uv run python -m ruff check src tests
+uv run python -m ruff format --check src tests
 ```
 
 ## Repository layout

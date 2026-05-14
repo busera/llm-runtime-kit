@@ -68,22 +68,46 @@ Do not use this skill when:
 
 ## Install in a Project
 
-From the consuming project, install from the approved package source, for example a local checkout during development:
+From the consuming project, install from the approved package source.
+
+Public GitHub source:
+
+```bash
+python -m pip install 'llm-runtime-kit @ git+https://github.com/busera/llm-runtime-kit.git'
+```
+
+Local checkout during development:
 
 ```bash
 python -m pip install -e /path/to/llm-runtime-kit
+```
+
+Optional extras:
+
+```bash
+python -m pip install -e '/path/to/llm-runtime-kit[credentials]'  # keyring support
+python -m pip install -e '/path/to/llm-runtime-kit[structured]'   # optional json-repair integration
 ```
 
 For development of the package itself:
 
 ```bash
 python -m pip install -e '.[dev]'
-python -m pytest
+python -m compileall -q src tests
+python -m pytest -q
 python -m ruff check src tests
 python -m ruff format --check src tests
 ```
 
-If packaging later moves to GitHub or a package index, replace the editable install with the pinned package source approved for that project.
+In Andrew's local checkout, `uv run ...` is also valid and avoids depending on a global `python` executable:
+
+```bash
+uv run python -m pytest -q
+uv run python -m ruff check src tests
+uv run python -m ruff format --check src tests
+```
+
+Pin the Git source or commit SHA in production-like projects when repeatability matters.
 
 ## Minimal Runtime Use
 
@@ -155,6 +179,11 @@ Recommended shape:
 ```yaml
 default_profile: ollama_default
 allow_cloud: false
+
+credentials:
+  sources: [env, dotenv, keyring]
+  dotenv_path: .env
+  keyring_service: llm-runtime-kit
 
 logging:
   level: INFO
@@ -246,6 +275,21 @@ profiles:
     max_context_tokens: 128000
     think: false
 
+  ollama_local_cloud_proxy_default:
+    provider: ollama_local_cloud_proxy
+    model: gpt-oss:120b-cloud
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 128000
+    think: false
+
+  openai_default:
+    provider: openai
+    model: gpt-5.5
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 128000
+
   openrouter_default:
     provider: openrouter
     model: openai/gpt-5.2
@@ -253,11 +297,21 @@ profiles:
     max_tokens: 4096
     max_context_tokens: 128000
 
+  anthropic_default:
+    provider: anthropic
+    model: claude-sonnet-4-5
+    temperature: 0.2
+    max_tokens: 4096
+    max_context_tokens: 200000
+
 fallbacks:
   ollama_default:
     - ollama_cloud_direct
+    - ollama_local_cloud_proxy_default
     - ollama_local_default
+    - openai_default
     - openrouter_default
+    - anthropic_default
 ```
 
 Important distinction:
@@ -265,8 +319,11 @@ Important distinction:
 - `ollama_local` is for the local daemon with local models.
 - `ollama_local_cloud_proxy` is for the local daemon proxying cloud-tagged models after `ollama signin`.
 - `ollama_cloud_api` is for direct API-key access to `https://ollama.com/api`.
+- `openai`, `openrouter`, and `anthropic` are API-key cloud providers and are blocked unless `allow_cloud: true`.
 
 This separation is deliberate. It makes privacy, cost, and authentication boundaries visible.
+
+The sample model names are examples, not guarantees that the model is available to every account or local daemon. Check the consuming project's approved model list before relying on a profile.
 
 Model parameter guidance:
 
@@ -388,6 +445,32 @@ Local Ollama daemon:
 - Use loopback endpoint such as `http://localhost:11434`.
 - If local daemon cloud proxying is used, authenticate with the Ollama CLI outside Python, for example `ollama signin`.
 
+## Agent-Facing Capability Boundary
+
+Current v0.1 capabilities agents may rely on:
+
+- synchronous, non-streaming chat completion calls only
+- OpenAI-compatible `/v1/chat/completions` shape for local Ollama, OpenAI, OpenRouter, and similar endpoints
+- native Ollama `/api/chat` for direct Ollama API-style providers
+- Anthropic Messages `/v1/messages`
+- lazy credential lookup from env, `.env`, and optional Python keyring
+- route aliases and ordered fallback chains
+- retry/fallback for transient HTTP/network failures and structured-output validation failures
+- generic JSON extraction, conservative repair, optional `json-repair`, Pydantic-style validation, and caller validators
+
+Not implemented in v0.1:
+
+- streaming responses or callbacks
+- OpenAI Responses API
+- tool/function calling abstraction
+- embedding/image/audio clients
+- automatic prompt packing against `max_context_tokens`
+- built-in semantic/domain validators
+- automatic live provider smoke tests or CLI commands
+- structured prompt/response log sinks
+
+Agents must not invent these features in consuming code. If a project needs one, implement it explicitly and update the package tests and docs.
+
 ## Agent Implementation Checklist
 
 When using this package in a consuming repo:
@@ -397,13 +480,14 @@ When using this package in a consuming repo:
 3. Add or update `config_llm.yaml` with explicit provider/profile/fallback sections.
 4. Add `.env.example` if API-key providers are configured, including `OPENROUTER_API_KEY` when OpenRouter is used.
 5. Verify `.gitignore` excludes `.env`, `.env.*`, logs, caches, and runtime state.
-6. Replace direct provider calls with `LLMRouter.complete()`.
-7. Keep application code provider-agnostic; profiles should be config names, not hardcoded model strings scattered through code.
-8. Keep project schemas and semantic validators in consuming code; use `output_model` and `output_validator` only as runtime hooks.
-9. Add tests with mocked clients or mocked HTTP openers.
-10. Test cloud-disabled behavior with `allow_cloud: false`.
-11. Test missing optional credentials do not break local-only execution.
-12. Run syntax, unit tests, lint, format check, and secret scan before committing.
+6. Run `load_config("config_llm.yaml")` in a test or smoke script to catch invalid fields and bad references.
+7. Replace direct provider calls with `LLMRouter.complete()`.
+8. Keep application code provider-agnostic; profiles should be config names, not hardcoded model strings scattered through code.
+9. Keep project schemas and semantic validators in consuming code; use `output_model` and `output_validator` only as runtime hooks.
+10. Add tests with mocked clients or mocked HTTP openers.
+11. Test cloud-disabled behavior with `allow_cloud: false`, including one-call cloud model overrides.
+12. Test missing optional credentials do not break local-only execution.
+13. Run syntax, unit tests, lint, format check, and secret scan before committing.
 
 ## Testing Pattern
 
@@ -443,6 +527,23 @@ Client-level tests should mock `urlopen` and assert:
 - HTTP error handling
 - timeout/URL error handling
 - invalid JSON handling where implemented
+
+## Safe Credential Presence Check
+
+When an agent needs to check whether a key is available, do not print the secret. Use the package resolver and print only `present`/`missing`:
+
+```bash
+python - <<'PY'
+from llm_runtime_kit import CredentialResolver, load_config
+
+config = load_config("config_llm.yaml")
+resolver = CredentialResolver(config.credentials)
+for name in ["OPENAI_API_KEY", "OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OLLAMA_API_KEY"]:
+    print(f"{name}: {'present' if resolver.get(name) else 'missing'}")
+PY
+```
+
+Only check keys that the consuming project actually configured. Never run commands that echo secret values into logs or chat transcripts.
 
 ## Common Pitfalls
 
