@@ -20,9 +20,13 @@ The point is to stop rebuilding the same provider/config/retry/fallback/logging 
 - Generic structured-output contract layer: JSON extraction, conservative repair, validation hooks, optional Pydantic validation, and validation-aware retry/fallback behavior
 - No live API calls in the test suite
 
+## Agent guide included
+
+This repository includes a root `SKILL.md` for AI coding agents such as Hermes, Claude Code, OpenClaw, and Codex. Treat it as the operational guide for installing, configuring, and safely using `llm-runtime-kit` in another project. It covers provider boundaries, credential handling, local-vs-cloud routing, structured-output use, testing expectations, common pitfalls, and verification steps.
+
 ## Current status
 
-This is an early v0.1 package: a reusable starting point for shared LLM projects, not a v1.0 runtime yet. CI currently runs compile, pytest, Ruff lint, and Ruff format checks on Python 3.10, 3.11, and 3.12. The test suite uses mocked tests for config validation, clients, credential lookup, output contracts, retry behavior, and routing/fallback behavior. It does not make live API calls.
+This is an early v0.1 package: a reusable starting point for shared LLM projects, not a v1.0 runtime yet. The public repository is https://github.com/busera/llm-runtime-kit. CI currently runs compile, pytest, Ruff lint, and Ruff format checks on Python 3.10, 3.11, and 3.12. The test suite uses mocked tests for config validation, clients, credential lookup, output contracts, retry behavior, and routing/fallback behavior. It does not make live API calls.
 
 Known next implementation areas:
 
